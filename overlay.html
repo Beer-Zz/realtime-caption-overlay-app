@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Subtitle Overlay</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@400;700&family=Inter:wght@400;700&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { width: 100vw; height: 100vh; background: transparent; overflow: hidden; }
+    body {
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: flex-end;
+      padding-bottom: 52px;
+      font-family: 'Noto Sans Thai', 'Inter', sans-serif;
+    }
+
+    .drag-handle {
+      position: fixed; top: 0; left: 0; right: 0;
+      height: 48px; z-index: 9999;
+      display: none; align-items: center; justify-content: center;
+      background: rgba(99,179,237,0.15);
+      border-bottom: 2px solid rgba(99,179,237,0.5);
+      backdrop-filter: blur(12px);
+      cursor: grab; user-select: none;
+      -webkit-app-region: drag;
+    }
+    .drag-handle.visible { display: flex; }
+    .drag-handle-label { font-size: 0.78rem; font-weight: 700; color: rgba(99,179,237,0.9); letter-spacing: 0.08em; pointer-events: none; }
+    .drag-handle-dots { display: flex; gap: 3px; margin-right: 8px; pointer-events: none; }
+    .drag-handle-dots span { width: 4px; height: 4px; border-radius: 50%; background: rgba(99,179,237,0.7); }
+
+    /* ── Wrapper ── */
+    .subtitle-wrapper {
+      display: flex; flex-direction: column;
+      align-items: center; max-width: 90vw; text-align: center;
+      transition: opacity 0.3s ease, transform 0.3s ease;
+    }
+    .subtitle-wrapper.hidden { opacity: 0; pointer-events: none; transform: translateY(10px); }
+
+    /* ── Interim slot: จองพื้นที่คงที่ด้านบน Final ไม่ขยับ ── */
+    .interim-slot {
+      width: 100%; min-height: 2.8rem;
+      display: flex; align-items: flex-end; justify-content: center;
+      padding-bottom: 5px;
+    }
+
+    /* ── Final slot: อยู่ด้านล่าง ── */
+    .final-slot { width: 100%; display: flex; flex-direction: column; align-items: center; gap: 5px; }
+
+    /* ── sub-group animations ── */
+    .sub-group { display: flex; flex-direction: column; align-items: center; gap: 5px; width: 100%; }
+    .sub-group.entering  { animation: slideIn 0.26s cubic-bezier(0.22,1,0.36,1) forwards; }
+    .sub-group.exiting   { animation: slideOut 0.26s cubic-bezier(0.55,0,1,0.45) forwards; }
+    @keyframes slideIn  { from{opacity:0;transform:translateY(16px)} to{opacity:1;transform:translateY(0)} }
+    @keyframes slideOut { from{opacity:1;transform:translateY(0)} to{opacity:0;transform:translateY(-16px)} }
+
+    /* ── Interim: fade only, ไม่เลื่อน ── */
+    .sub-group.interim-group             { animation: interimFadeIn  0.18s ease forwards; }
+    .sub-group.interim-group.fading-out  { animation: interimFadeOut 0.18s ease forwards; }
+    @keyframes interimFadeIn  { from{opacity:0} to{opacity:1} }
+    @keyframes interimFadeOut { from{opacity:1} to{opacity:0} }
+
+    /* ── sub-line (คงเดิม 100%) ── */
+    .sub-line {
+      display: inline-block; padding: 9px 26px; border-radius: 10px;
+      font-weight: 700; line-height: 1.4; letter-spacing: 0.01em; word-break: break-word;
+      background: rgba(0,0,0,0.72); color: #fff;
+      text-shadow: 0 2px 8px rgba(0,0,0,0.8);
+      backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
+      transition: font-size 0.2s ease;
+    }
+    .sub-original     { font-size: 2rem; color: #ffffff; }
+    .sub-translated   { font-size: 1.55rem; }
+    .sub-translated.tl-0 { color: #a8d8ff; }
+    .sub-translated.tl-1 { color: #b9f6ca; }
+    .sub-translated.tl-2 { color: #ffe082; }
+    .sub-group.interim-group .sub-line { opacity: 0.45; font-style: italic; background: rgba(0,0,0,0.50); }
+  </style>
+</head>
+<body>
+
+<div class="drag-handle" id="dragHandle">
+  <div class="drag-handle-dots"><span></span><span></span><span></span><span></span><span></span><span></span></div>
+  <div class="drag-handle-label">ลาก Overlay ไปวางตำแหน่งที่ต้องการ</div>
+</div>
+
+<div class="subtitle-wrapper" id="subWrapper">
+  <div class="interim-slot" id="interimSlot"></div>
+  <div class="final-slot"   id="finalSlot"></div>
+</div>
+
+<script>
+  const wrapper     = document.getElementById('subWrapper');
+  const interimSlot = document.getElementById('interimSlot');
+  const finalSlot   = document.getElementById('finalSlot');
+  const dragHandle  = document.getElementById('dragHandle');
+
+  let finalGroup        = null;
+  let interimGroup      = null;
+  let exitTimer         = null;
+  let interimClearTimer = null;
+  let interimFadeTimer  = null;
+
+  let currentScaleFinal   = 1.0;
+  let currentScaleInterim = 1.0;
+  const BASE_ORIGINAL   = 2.00;
+  const BASE_TRANSLATED = 1.55;
+
+  function applyScale(scale) {
+    currentScaleFinal = scale;
+    if (finalGroup) {
+      finalGroup.querySelectorAll('.sub-original').forEach(el => { el.style.fontSize = (BASE_ORIGINAL * scale) + 'rem'; });
+      finalGroup.querySelectorAll('.sub-translated').forEach(el => { el.style.fontSize = (BASE_TRANSLATED * scale) + 'rem'; });
+    }
+  }
+
+  function applyScaleInterim(scale) {
+    currentScaleInterim = scale;
+    interimSlot.style.minHeight = (BASE_ORIGINAL * scale * 1.4 + 0.4) + 'rem';
+    if (interimGroup) {
+      interimGroup.querySelectorAll('.sub-original').forEach(el => { el.style.fontSize = (BASE_ORIGINAL * scale) + 'rem'; });
+    }
+  }
+
+  function setOverlayVisible(visible) { visible ? wrapper.classList.remove('hidden') : wrapper.classList.add('hidden'); }
+  function setDraggable(enabled)      { enabled ? dragHandle.classList.add('visible') : dragHandle.classList.remove('visible'); }
+
+  function makeSubLine(className, text, isInterim = false) {
+    const el = document.createElement('div');
+    el.className = 'sub-line ' + className;
+    el.textContent = text;
+    const scale = isInterim ? currentScaleInterim : currentScaleFinal;
+    if (className.includes('sub-original'))   el.style.fontSize = (BASE_ORIGINAL   * scale) + 'rem';
+    if (className.includes('sub-translated')) el.style.fontSize = (BASE_TRANSLATED * scale) + 'rem';
+    return el;
+  }
+
+  const es = new EventSource(window.location.origin + '/stream');
+  es.onmessage = (e) => {
+    const data = JSON.parse(e.data);
+    if (data.type === 'connected' || data.type === 'ping') return;
+    if (data.type === 'overlay-visible')    { setOverlayVisible(data.visible); return; }
+    if (data.type === 'set-draggable')      { setDraggable(data.enabled); return; }
+    if (data.type === 'clear-interim')      { removeInterimGroup(); return; }
+    if (data.type === 'clear')              { clearAll(); return; }
+    if (data.type === 'interim')            { showInterim(data.text); return; }
+    if (data.type === 'final')              { showFinal(data.original, data.translations, data.show_original); return; }
+    if (data.type === 'font-scale')         { applyScale(data.scale); return; }
+    if (data.type === 'font-scale-interim') { applyScaleInterim(data.scale); return; }
+  };
+  es.onerror = () => {};
+
+  function clearAll() {
+    clearTimeout(exitTimer); clearTimeout(interimClearTimer); clearTimeout(interimFadeTimer);
+    interimSlot.innerHTML = ''; finalSlot.innerHTML = '';
+    finalGroup = null; interimGroup = null; lastFinalKey = '';
+  }
+
+  function removeInterimGroup(animated = true) {
+    clearTimeout(interimClearTimer); clearTimeout(interimFadeTimer);
+    if (!interimGroup) return;
+    if (animated && interimGroup.parentNode) {
+      interimGroup.classList.add('fading-out');
+      interimFadeTimer = setTimeout(() => {
+        if (interimGroup && interimGroup.parentNode) interimGroup.remove();
+        interimGroup = null;
+      }, 180);
+    } else {
+      if (interimGroup.parentNode) interimGroup.remove();
+      interimGroup = null;
+    }
+  }
+
+  function showInterim(text) {
+    if (!text || !text.trim()) return;
+    clearTimeout(interimClearTimer); clearTimeout(interimFadeTimer);
+    if (!interimGroup || !interimGroup.parentNode) {
+      const group = document.createElement('div');
+      group.className = 'sub-group interim-group';
+      group.appendChild(makeSubLine('sub-original', text.trim(), true));
+      interimSlot.appendChild(group);
+      interimGroup = group;
+    } else {
+      const el = interimGroup.querySelector('.sub-line');
+      if (el) el.textContent = text.trim();
+    }
+    interimClearTimer = setTimeout(() => removeInterimGroup(true), 2000);
+  }
+
+  let lastFinalKey = '';
+
+  function showFinal(original, translations, showOriginal) {
+    const key = (original || '') + '|' + (translations || []).map(t => t.text).join('|');
+    if (key && key === lastFinalKey) return;
+    lastFinalKey = key;
+
+    removeInterimGroup(false);
+
+    if (finalGroup) {
+      const old = finalGroup;
+      old.classList.remove('entering'); old.classList.add('exiting');
+      clearTimeout(exitTimer);
+      exitTimer = setTimeout(() => { if (old.parentNode) old.remove(); }, 280);
+    }
+
+    const group = buildGroup(original, translations, showOriginal);
+    group.classList.add('entering');
+    finalSlot.appendChild(group);
+    finalGroup = group;
+  }
+
+  function buildGroup(original, translations, showOriginal = true) {
+    const group = document.createElement('div');
+    group.className = 'sub-group';
+    if (showOriginal && original) group.appendChild(makeSubLine('sub-original', original));
+    if (translations && translations.length > 0) {
+      translations.forEach((t, i) => {
+        if (!t.text) return;
+        group.appendChild(makeSubLine('sub-translated tl-' + i, t.text));
+      });
+    }
+    return group;
+  }
+</script>
+</body>
+</html>
