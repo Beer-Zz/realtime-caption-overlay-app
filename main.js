@@ -139,6 +139,42 @@ function createOverlay() {
     } catch(e) { setTimeout(pollPosition, 500); }
   }
   setTimeout(pollPosition, 3000);
+
+  // ── polling display index จาก Flask ──
+  let lastDisplayIndex = -1;
+
+  function pollDisplay() {
+    try {
+      const url = new URL(SERVER);
+      const isHttps = url.protocol === 'https:';
+      const mod = isHttps ? require('https') : require('http');
+      const options = {
+        hostname: url.hostname,
+        port: url.port || (isHttps ? 443 : 80),
+        path: '/electron-state',
+        method: 'GET',
+        rejectUnauthorized: false,
+      };
+      const req = mod.request(options, (res) => {
+        let body = '';
+        res.on('data', chunk => body += chunk);
+        res.on('end', () => {
+          try {
+            const data = JSON.parse(body);
+            if (data.currentDisplayIndex !== undefined &&
+                data.currentDisplayIndex !== lastDisplayIndex) {
+              lastDisplayIndex = data.currentDisplayIndex;
+              moveOverlayToDisplay(data.currentDisplayIndex);
+            }
+          } catch(e) {}
+          setTimeout(pollDisplay, 800);
+        });
+      });
+      req.on('error', () => setTimeout(pollDisplay, 800));
+      req.end();
+    } catch(e) { setTimeout(pollDisplay, 800); }
+  }
+  setTimeout(pollDisplay, 3000);
 }
 
 // ── ย้าย overlay ไปจอที่ index ── (เหมือนเดิม 100%)
