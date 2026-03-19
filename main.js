@@ -42,6 +42,7 @@ function notifyFlask(path, data) {
       port: url.port || (isHttps ? 443 : 80),
       path: path,
       method: 'POST',
+      rejectUnauthorized: false,
       headers: {
         'Content-Type': 'application/json',
         'Content-Length': Buffer.byteLength(body),
