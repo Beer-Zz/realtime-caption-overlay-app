@@ -2,13 +2,12 @@ const { app, BrowserWindow, screen, session } = require('electron');
 const http = require('http');
 
 let overlayWin = null;
-let currentDisplayIndex = 0;  // track จอที่เลือกอยู่
+let currentDisplayIndex = 0;
 
 // ── [เพิ่มใหม่] SERVER URL ──
-// - รันบนเครื่อง dev (npm start)  → ใช้ localhost:5000 เหมือนเดิม
-// - รันจาก .exe ที่ build แล้ว    → ใช้ Render URL อัตโนมัติ
-// ⚠️ แก้ https://your-app.onrender.com เป็น URL จริงก่อน build ครับ
-const SERVER = process.env.SERVER_URL || 'https://your-app.onrender.com';
+// - npm start (dev)  → localhost:5000
+// - .exe (cloud)     → Render URL
+const SERVER = process.env.SERVER_URL || 'https://realtime-caption-2.onrender.com';
 
 // ── ดึงรายการจอทั้งหมด ── (เหมือนเดิม 100%)
 function getDisplays() {
@@ -31,6 +30,41 @@ function getDisplays() {
   });
 }
 
+// ── [เพิ่มใหม่] ส่งข้อมูลไปบอก Flask ──
+function notifyFlask(path, data) {
+  try {
+    const url = new URL(SERVER);
+    const isHttps = url.protocol === 'https:';
+    const mod = isHttps ? require('https') : require('http');
+    const body = JSON.stringify(data);
+    const options = {
+      hostname: url.hostname,
+      port: url.port || (isHttps ? 443 : 80),
+      path: path,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(body),
+      },
+    };
+    const req = mod.request(options);
+    req.on('error', () => {});
+    req.write(body);
+    req.end();
+  } catch(e) {}
+}
+
+// ── [เพิ่มใหม่] ส่งข้อมูลจอทั้งหมดไปให้ Flask ──
+function registerToFlask() {
+  const displays = getDisplays();
+  const pos = getOverlayPosition();
+  notifyFlask('/electron-register', {
+    displays,
+    currentDisplayIndex,
+    position: pos,
+  });
+}
+
 // ── สร้าง overlay window (โครงเดิม 100%) ──
 function createOverlay() {
   const { width, height } = screen.getPrimaryDisplay().workAreaSize;
@@ -49,9 +83,8 @@ function createOverlay() {
     },
   });
 
-  // ✅ ล้าง cache ทุกครั้งก่อนโหลด เพื่อให้ได้ไฟล์ล่าสุดเสมอ
+  // ✅ ล้าง cache ทุกครั้งก่อนโหลด
   session.defaultSession.clearCache().then(() => {
-    // ── [เปลี่ยน] localhost:5000 → SERVER (บรรทัดนี้บรรทัดเดียว) ──
     overlayWin.loadURL(`${SERVER}/overlay?lang=both`, {
       extraHeaders: 'Cache-Control: no-cache, no-store\nPragma: no-cache'
     });
@@ -60,6 +93,9 @@ function createOverlay() {
   overlayWin.setIgnoreMouseEvents(true, { forward: true });
   overlayWin.setAlwaysOnTop(true, 'screen-saver');
   overlayWin.on('closed', () => { overlayWin = null; });
+
+  // ── [เพิ่มใหม่] แจ้ง Flask ว่า Electron พร้อมแล้ว ──
+  setTimeout(() => registerToFlask(), 2000);
 }
 
 // ── ย้าย overlay ไปจอที่ index ── (เหมือนเดิม 100%)
@@ -72,10 +108,12 @@ function moveOverlayToDisplay(index) {
     overlayWin.setAlwaysOnTop(true, 'screen-saver');
   }
   currentDisplayIndex = index;
+  // ── [เพิ่มใหม่] อัปเดต Flask ──
+  registerToFlask();
   return true;
 }
 
-// ── ย้าย overlay ไปตำแหน่ง x, y (relative ต่อจอที่เลือกอยู่) ── (เหมือนเดิม 100%)
+// ── ย้าย overlay ไปตำแหน่ง x, y ── (เหมือนเดิม 100%)
 function setOverlayPosition(x, y) {
   if (!overlayWin) return false;
   const displays = screen.getAllDisplays();
@@ -83,10 +121,12 @@ function setOverlayPosition(x, y) {
   const absX = Math.round(display.bounds.x + x);
   const absY = Math.round(display.bounds.y + y);
   overlayWin.setPosition(absX, absY);
+  // ── [เพิ่มใหม่] อัปเดต Flask ──
+  registerToFlask();
   return true;
 }
 
-// ── ดึงตำแหน่งปัจจุบัน (relative ต่อจอที่เลือกอยู่) ── (เหมือนเดิม 100%)
+// ── ดึงตำแหน่งปัจจุบัน ── (เหมือนเดิม 100%)
 function getOverlayPosition() {
   if (!overlayWin) return { x: 0, y: 0, width: 1920, height: 1080 };
   const [absX, absY] = overlayWin.getPosition();
@@ -114,21 +154,18 @@ http.createServer((req, res) => {
 
   if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
 
-  // GET /displays
   if (req.method === 'GET' && req.url === '/displays') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(getDisplays()));
     return;
   }
 
-  // GET /position
   if (req.method === 'GET' && req.url === '/position') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(getOverlayPosition()));
     return;
   }
 
-  // POST body helper
   const readBody = (cb) => {
     let body = '';
     req.on('data', chunk => body += chunk);
@@ -138,7 +175,6 @@ http.createServer((req, res) => {
     });
   };
 
-  // POST /set-display
   if (req.method === 'POST' && req.url === '/set-display') {
     readBody(({ index }) => {
       const ok = moveOverlayToDisplay(parseInt(index));
@@ -148,7 +184,6 @@ http.createServer((req, res) => {
     return;
   }
 
-  // POST /set-position
   if (req.method === 'POST' && req.url === '/set-position') {
     readBody(({ x, y }) => {
       const ok = setOverlayPosition(Number(x), Number(y));
@@ -158,7 +193,6 @@ http.createServer((req, res) => {
     return;
   }
 
-  // POST /set-draggable (รับ request แต่ drag จัดการใน overlay.html ผ่าน SSE)
   if (req.method === 'POST' && req.url === '/set-draggable') {
     readBody(() => {
       res.writeHead(200, { 'Content-Type': 'application/json' });
