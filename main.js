@@ -164,7 +164,9 @@ function createOverlay() {
             if (data.currentDisplayIndex !== undefined &&
                 data.currentDisplayIndex !== lastDisplayIndex) {
               lastDisplayIndex = data.currentDisplayIndex;
+              _suppressRegister = true;
               moveOverlayToDisplay(data.currentDisplayIndex);
+              _suppressRegister = false;
             }
           } catch(e) {}
           setTimeout(pollDisplay, 800);
@@ -177,6 +179,9 @@ function createOverlay() {
   setTimeout(pollDisplay, 3000);
 }
 
+// ── ป้องกัน register loop เมื่อ pollDisplay สั่งย้ายจอ ──
+let _suppressRegister = false;
+
 // ── ย้าย overlay ไปจอที่ index ── (เหมือนเดิม 100%)
 function moveOverlayToDisplay(index) {
   const displays = screen.getAllDisplays();
@@ -187,8 +192,8 @@ function moveOverlayToDisplay(index) {
     overlayWin.setAlwaysOnTop(true, 'screen-saver');
   }
   currentDisplayIndex = index;
-  // ── [เพิ่มใหม่] อัปเดต Flask ──
-  registerToFlask();
+  // ── [เพิ่มใหม่] อัปเดต Flask (ยกเว้นตอนถูกสั่งจาก pollDisplay) ──
+  if (!_suppressRegister) registerToFlask();
   return true;
 }
 
