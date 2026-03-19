@@ -99,6 +99,46 @@ function createOverlay() {
   setTimeout(() => registerToFlask(), 2000);
   setTimeout(() => registerToFlask(), 5000);
   setTimeout(() => registerToFlask(), 10000);
+
+  // ── [เพิ่มใหม่] polling ตำแหน่งจาก Flask ทุก 500ms ──
+  let lastX = -1;
+  let lastY = -1;
+
+  function pollPosition() {
+    try {
+      const url = new URL(SERVER);
+      const isHttps = url.protocol === 'https:';
+      const mod = isHttps ? require('https') : require('http');
+      const options = {
+        hostname: url.hostname,
+        port: url.port || (isHttps ? 443 : 80),
+        path: '/position',
+        method: 'GET',
+        rejectUnauthorized: false,
+      };
+      const req = mod.request(options, (res) => {
+        let body = '';
+        res.on('data', chunk => body += chunk);
+        res.on('end', () => {
+          try {
+            const data = JSON.parse(body);
+            if (data.x !== undefined && data.y !== undefined) {
+              // ย้ายเฉพาะเมื่อตำแหน่งเปลี่ยนแปลง
+              if (data.x !== lastX || data.y !== lastY) {
+                lastX = data.x;
+                lastY = data.y;
+                setOverlayPosition(data.x, data.y);
+              }
+            }
+          } catch(e) {}
+          setTimeout(pollPosition, 500);
+        });
+      });
+      req.on('error', () => setTimeout(pollPosition, 500));
+      req.end();
+    } catch(e) { setTimeout(pollPosition, 500); }
+  }
+  setTimeout(pollPosition, 3000);
 }
 
 // ── ย้าย overlay ไปจอที่ index ── (เหมือนเดิม 100%)
