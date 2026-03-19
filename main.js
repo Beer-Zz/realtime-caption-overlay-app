@@ -97,6 +97,8 @@ function createOverlay() {
 
   // ── [เพิ่มใหม่] แจ้ง Flask ว่า Electron พร้อมแล้ว ──
   setTimeout(() => registerToFlask(), 2000);
+  setTimeout(() => registerToFlask(), 5000);
+  setTimeout(() => registerToFlask(), 10000);
 }
 
 // ── ย้าย overlay ไปจอที่ index ── (เหมือนเดิม 100%)
