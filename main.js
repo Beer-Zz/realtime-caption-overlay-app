@@ -7,7 +7,7 @@ let currentDisplayIndex = 0;
 // ── [เพิ่มใหม่] SERVER URL ──
 // - npm start (dev)  → localhost:5000
 // - .exe (cloud)     → Render URL
-const SERVER = process.env.SERVER_URL || 'https://realtime-caption-2.onrender.com';
+const SERVER = process.env.SERVER_URL || 'https://event-box.onrender.com';
 
 // ── ดึงรายการจอทั้งหมด ── (เหมือนเดิม 100%)
 function getDisplays() {
